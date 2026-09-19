@@ -106,6 +106,37 @@ int main()
         printf("       （实际那句 %d 字节）\n", (int)styled.size());
     }
 
+    printf("\n==== 只发喊话、不配音效的条目也必须能触发 ====\n");
+    {
+        // 这一节是回归测试。匹配那一行原来卡的是 HasSounds()，而队伍聊天是
+        // 后加的功能 —— 结果只配了 Chat= 的条目永远开不了判定窗，科目三那条
+        // 就是这么哑掉的：日志里 33029 到了两次，却一条 window open 都没有。
+        using plugin::Attack;
+        using plugin::CondPool;
+        using plugin::SoundSpec;
+
+        Attack a;                       // 什么都没配
+        EqInt("空条目：没产出", (int)a.HasOutput(), 0);
+
+        Attack b;                       // 只有兜底喊话
+        b.defChat = "打完了";
+        EqInt("只有 Chat= ：算产出", (int)b.HasOutput(), 1);
+        EqInt("  （它确实没有音效）", (int)b.HasSounds(), 0);
+
+        Attack c;                       // 只有某条条件的喊话 —— 科目三就是这种
+        CondPool cp;
+        cp.chat = "至尊太刀侠科目三成功！";
+        c.conds.push_back(cp);
+        EqInt("只有 Chat:<表达式>= ：算产出", (int)c.HasOutput(), 1);
+        EqInt("  （它确实没有音效）", (int)c.HasSounds(), 0);
+
+        Attack d;                       // 只有音效，老行为不能变
+        SoundSpec sp;
+        sp.path = "sounds/x.wav";
+        d.defPool.specs.push_back(sp);
+        EqInt("只有音效：算产出（老行为）", (int)d.HasOutput(), 1);
+    }
+
     printf("\n%s\n", bad ? "有失败项" : "全部通过");
     return bad ? 1 : 0;
 }

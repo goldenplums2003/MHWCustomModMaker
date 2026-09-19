@@ -1603,6 +1603,20 @@ struct Attack
         for (const auto& c : conds) if (!c.pool.empty()) return true;
         return false;
     }
+
+    // 这条目命中之后到底会不会「产出」点什么。
+    //
+    // 别拿 HasSounds() 当这个用：队伍聊天是后加的，一个只配了 Chat= 的条目
+    // 没有任何音效，但它照样该触发。匹配那一行原来卡的是 HasSounds()，
+    // 于是只发喊话的条目永远开不了判定窗 —— 科目三那条就是这么哑掉的。
+    bool HasChat() const
+    {
+        if (!defChat.empty()) return true;
+        for (const auto& c : conds) if (!c.chat.empty()) return true;
+        return false;
+    }
+
+    bool HasOutput() const { return HasSounds() || HasChat(); }
 };
 
 // 0..3 -> names used by Sound:<tag> keys
@@ -2901,7 +2915,7 @@ DWORD WINAPI WorkerProc(LPVOID)
                     (e.fsmId < 0 || e.fsmId == sFsm) &&
                     (e.fsmTarget < 0 || e.fsmTarget == sFsmTarget) &&
                     lmtOk &&
-                    e.HasSounds();
+                    e.HasOutput();
 
                 const std::string tag = "a[" + e.name + "]";
 
