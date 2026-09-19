@@ -1505,13 +1505,19 @@ void App::DrawEditorDetached() {
         editor.weaponType = wi - 1;
     }
 
-    ImGui::SetNextItemWidth(190 * dpiScale);
-    ImGui::InputInt("FSMId (-1=不限)", &editor.fsmId, 1, 100);
+    // ImGui 的标签画在控件右边，标签越长占的横向空间越多。这一行原来还挤着
+    // LMT，三个加起来一千出头，编辑窗没那么宽，LMT 就被推出右边界看不见了。
+    // LMT 已经由上游 v2.5 挪到下面单独一块（还顺带加了「不限」勾选和解析回显）；
+    // 这里把两个数字框也瘦一圈，「(-1=不限)」从标签挪进气泡 ——
+    // 那句话每次都占着地方，但只有第一次看的人需要。
+    ImGui::SetNextItemWidth(150 * dpiScale);
+    ImGui::InputInt("FSMId", &editor.fsmId, 1, 100);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("动作状态机 ID；同一招在不同 FSM 层(target)里 id 可能重号");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(180 * dpiScale);
-    ImGui::InputInt("FSMTarget (-1=不限)", &editor.fsmTarget, 1, 100);
+        ImGui::SetTooltip("动作状态机 ID；-1 = 不限。\n"
+                          "同一招在不同 FSM 层(target)里 id 可能重号");
+    ImGui::SameLine(0, 20);
+    ImGui::SetNextItemWidth(150 * dpiScale);
+    ImGui::InputInt("FSMTarget", &editor.fsmTarget, 1, 100);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("FSM 目标层。填上可避免跨层 id 重号误触发；-1 = 只比 FSMId（旧行为）");
 
