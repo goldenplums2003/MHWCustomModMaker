@@ -271,8 +271,8 @@ std::wstring gDataDir;     // 数据目录：<ModuleDir>WeaponSoundEnhance\ ，�
 // 对外露出的产品名。文件名（dll/ini/数据目录）还是 WeaponSoundEnhance —— 那些
 // 一改，所有老用户的配置就都找不着了。这里只管「给人看的名字」：桌面快捷方式、
 // 窗口标题这类。将来改名动这两行就够。
-const wchar_t* const kAppNameW = L"WeaponSoundEnhance";
-const wchar_t* const kAppDescW = L"WeaponSoundEnhance 配置工具";
+const wchar_t* const kAppNameW = L"怪猎自定义模组制作器";
+const wchar_t* const kAppDescW = L"怪猎自定义模组制作器";
 
 std::wstring gIniPath;
 std::wstring gLogPath;
@@ -334,7 +334,7 @@ void LogInit()
 {
     gLogPath = gDataDir + L"WeaponSoundEnhance.log";
     ::DeleteFileW(gLogPath.c_str());
-    Log("WeaponSoundEnhance 2.6 starting");
+    Log("怪猎自定义模组制作器 (WeaponSoundEnhance) 2.6 starting");
     // 旧布局提示：wav 还在 plugins\sounds\ 时自动兼容，但建议搬进数据目录
     const std::wstring oldSounds = gModuleDir + L"sounds";
     if (gDataDir != gModuleDir && DirExistsW(oldSounds) &&

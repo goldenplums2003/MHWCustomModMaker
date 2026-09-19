@@ -166,6 +166,9 @@ static const ChatColorDef kChatColors[] = {
 };
 static const int kChatColorCount = (int)(sizeof(kChatColors) / sizeof(kChatColors[0]));
 
+const char*    kAppName  = "怪猎自定义模组制作器";
+const wchar_t* kAppNameW = L"怪猎自定义模组制作器";
+
 int ChatColorCount() { return kChatColorCount; }
 
 const ChatColorDef& ChatColorAt(int i)

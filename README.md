@@ -1,29 +1,45 @@
-# WeaponSoundEnhance
+# 怪猎自定义模组制作器
 
 <div align="center">
-  <img src="assets/icon.png" alt="WeaponSoundEnhance icon" width="256">
+  <img src="assets/icon.png" alt="怪猎自定义模组制作器" width="256">
 </div>
 
-给《怪物猎人：世界 / 冰原》增加「武器派生攻击音效」的原生 DLL 插件。
+给《怪物猎人：世界 / 冰原》做**音频和文本模组**的工具。
+
+不是一个音效包 —— 是让你**自己定规则**的东西：游戏里发生了什么（你出了哪一招、
+怪物出了哪一招、这一下打中没打中、刃色掉没掉），就让它响什么、说什么。
+规则写在 ini 里，也可以全程用配套的图形界面点出来，不用碰任何代码。
 
 **独立插件**：不依赖 Lua 脚本引擎、不依赖游戏音频引擎，也不调用游戏托管音频函数。
 只需一个公认的加载前置（如 **Stracker's Loader** / 狩技 mod 盒子）被注入即可运行。
 
 ## 📥 下载 / Release
 
-[![GitHub release](https://img.shields.io/github/release/2749478981/WeaponSoundEnhance.svg?style=flat-square)](https://github.com/2749478981/WeaponSoundEnhance/releases)
-[![GitHub stars](https://img.shields.io/github/stars/2749478981/WeaponSoundEnhance.svg?style=flat-square)](https://github.com/2749478981/WeaponSoundEnhance)
-[![License](https://img.shields.io/github/license/2749478981/WeaponSoundEnhance.svg?style=flat-square)](LICENSE)
+[![GitHub release](https://img.shields.io/github/release/goldenplums2003/MHWCustomModMaker.svg?style=flat-square)](https://github.com/goldenplums2003/MHWCustomModMaker/releases)
+[![GitHub stars](https://img.shields.io/github/stars/goldenplums2003/MHWCustomModMaker.svg?style=flat-square)](https://github.com/goldenplums2003/MHWCustomModMaker)
+[![License](https://img.shields.io/github/license/goldenplums2003/MHWCustomModMaker.svg?style=flat-square)](LICENSE)
 
-- 最新发布：<https://github.com/2749478981/WeaponSoundEnhance/releases/latest>
+- 最新发布：<https://github.com/goldenplums2003/MHWCustomModMaker/releases/latest>
 
-> Release zip 解压后为 `nativePC\plugins\` 结构（`WeaponSoundEnhance.dll` + `WeaponSoundEnhance\` 子目录：`*.ini.template`、`fsm_db.csv`、GUI、空的 `sounds\`），拖进狩技 mod 盒子或放入游戏目录即可。
+> Release zip 解压后为 `nativePC\plugins\` 结构（`WeaponSoundEnhance.dll` + `WeaponSoundEnhance\` 子目录：`*.ini.template`、`fsm_db.csv`、GUI、空的 `sounds\`），拖进狩技 mod 盒子或放入游戏目录即可。第一次进游戏会自动在桌面放一个配置工具的快捷方式。
+
+> **文件名为什么还叫 WeaponSoundEnhance？** 改了的话所有老用户的配置、音效路径、
+> ini 段名就全都失效了。所以只有「给人看的名字」换了，磁盘上的文件名保持不变。
+
+## 关于这个项目
+
+本项目基于 [2749478981/WeaponSoundEnhance](https://github.com/2749478981/WeaponSoundEnhance)
+（MIT），原作者做了音效插件的整个基础。这个分支在此之上把它扩成了一个通用的
+音频/文本模组工具：条件判定、怪物动作触发、队伍聊天发送、图形化配置界面。
+
+原项目的版权声明保留在 [LICENSE](LICENSE) 里，本项目同样以 MIT 发布。
 
 ---
 
 ## ✨ 功能
 
-- **派生攻击触发音效**：玩家做组合/派生动作时，按配置匹配到对应动作，播放一条 wav。
+- **动作触发音效**：玩家做组合/派生动作时，按配置匹配到对应动作，播放一条 wav。
+- **怪物动作触发**：`Target=monster` 的条目比的是当前怪物的动作，可以做「怪物开始转阶段了」「怪物出某一招了」这类提示。
 - **每条动作多条音效**：`Sound` 分号分隔多条，触发时**随机抽一条**；缺一条会自动试同条目里存在的另一条。
 - **并发叠播**：多条音效可同时叠加，互不掐断；上限 6 个声部防卡顿。
 - **固定音效 F**：`路径|延时|音量|F`，命中该动作时**总是播放**，同条目其余未固定音效仍随机抽一条同时叠播。
@@ -33,6 +49,7 @@
 - **动作组 Group=**：同一招跨越多个触发点（判定帧、升刃前后帧、多 LMT）时填相同组名，整招只响一次，刃级以首个触发瞬间为准。
 - **每武器配置组合**：每个武器可有多个命名组合（`[WeaponW:名]`），`[Active]` 决定每武器当前用哪个；切换只影响该武器。GUI 下拉或游戏内 `Ctrl+F11` 切换。
 - **游戏内热键**：开关 / 重载 / 音量 / 额外音效 / 切换组合。
+- **队伍聊天发送**：判定出结果后往队伍频道发一句，队友都看得见。界面上只需要挑个颜色、打上文字，样式标签自动拼。
 - **游戏聊天框指令**：聊天框打 `/wse ...` 即可改配置。
 - **自动重采样**：任意采样率 PCM wav 先转成标准 44.1kHz，保证能播。
 - **内存安全**：所有游戏内存读取都做页级校验，地址失效只跳过本轮，不崩溃。

@@ -134,6 +134,11 @@ const ChatColorDef& ChatColorAt(int i);
 void        ChatSet(ChatLine& cl, const std::string& s);   // ini 文本 -> 界面
 std::string ChatGet(const ChatLine& cl);                   // 界面 -> ini 文本
 
+// 给人看的产品名。注意别拿它去拼文件名 —— 文件名（dll/ini/数据目录/ini 段名）
+// 仍然是 WeaponSoundEnhance，一改老用户的配置和音效路径就全找不着了。
+extern const char*    kAppName;      // UTF-8
+extern const wchar_t* kAppNameW;
+
 bool LoadConfig(const std::string& path, Config& cfg);
 bool SaveConfig(const std::string& path, const Config& cfg);
 

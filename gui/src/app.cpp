@@ -648,7 +648,7 @@ void App::DrawToolbar() {
     dl->AddCircleFilled(ImVec2(p0.x + 31 * dpiScale, y), r, IM_COL32(254, 188, 46, 255));
     dl->AddCircleFilled(ImVec2(p0.x + 49 * dpiScale, y), r, IM_COL32(40, 200, 64, 255));
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 62 * dpiScale);
-    ImGui::Text("WeaponSoundEnhance");
+    ImGui::Text("怪猎自定义模组制作器");
     ImGui::SameLine(0, 8);
     ImGui::TextDisabled("武器音效配置工具 (15.23.00)");
 
@@ -2285,7 +2285,7 @@ void App::Draw() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
     ImGui::SetNextWindowSize(vp->WorkSize);
-    ImGui::Begin("WeaponSoundEnhance 配置工具", nullptr,
+    ImGui::Begin(kAppName, nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                  ImGuiWindowFlags_NoBringToFrontOnFocus);

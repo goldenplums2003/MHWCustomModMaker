@@ -454,7 +454,7 @@ static void ReportCrash(DWORD code, void* addr) {
              "编辑器发生访问违例(code=0x%08X, RVA=0x%llX)，已拦截避免闪退。\n"
              "请把本窗口截图，或 %s 发给我。",
              (unsigned)code, (unsigned long long)rva, path);
-    MessageBoxA(nullptr, msg, "WeaponSoundEnhance GUI", MB_ICONERROR);
+    MessageBoxA(nullptr, msg, kAppName, MB_ICONERROR);
 }
 #endif // _MSC_VER
 
@@ -477,7 +477,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
                                    GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTSIZE);
     wc.lpszClassName = L"WeaponSoundEnhanceGUI";
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"WeaponSoundEnhance 配置工具 (15.23.00)",
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"怪猎自定义模组制作器 (15.23.00)",
                               WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, ww, wh,
                               nullptr, nullptr, wc.hInstance, nullptr);
 
