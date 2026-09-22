@@ -998,27 +998,37 @@ bool ParseWav(const std::uint8_t* buf, std::size_t size, Wav& out)
 
 // Linear-interpolation resample of 16-bit PCM to a standard rate (waveOut
 // rejects exotic rates such as 28000 Hz; 44100 is the playback standard).
+//
+// 必须按「帧」走，不能按「采样点」走。立体声的 PCM 是 L R L R … 交错存的，
+// 把整块当成一条平坦的采样流去插值，每个输出点就会落在一个 L 和一个 R 之间，
+// 左右互相串 —— 实测拿「左恒 +12000 / 右恒 -12000」的信号做 48k->44.1k，
+// 只有 8.8% 的点保住原幅度，50.3% 被拉向 0，立体声整个塌掉。
+// 单声道文件两种写法等价，所以这个 bug 一直没被发现。
 void ResampleTo(Wav& w, std::uint32_t targetRate = 44100)
 {
     if (!w.valid || w.sampleRate == targetRate) return;
     if (w.bitsPer != 16) return;
 
-    const std::size_t inSamples = w.data.size() / 2;
-    if (inSamples == 0) return;
-    const std::size_t outSamples = (std::size_t)((double)inSamples * targetRate / w.sampleRate);
-    if (outSamples == 0) return;
+    const std::size_t ch = (w.channels > 0) ? w.channels : 1;
+    const std::size_t inFrames = w.data.size() / (2 * ch);
+    if (inFrames == 0) return;
+    const std::size_t outFrames =
+        (std::size_t)((double)inFrames * targetRate / w.sampleRate);
+    if (outFrames == 0) return;
 
     const std::int16_t* in = reinterpret_cast<const std::int16_t*>(w.data.data());
-    const double step = (double)inSamples / (double)outSamples;
-    std::vector<std::int16_t> out(outSamples);
-    for (std::size_t i = 0; i < outSamples; ++i) {
-        double pos = (double)i * step;
-        std::size_t idx = (std::size_t)pos;
-        if (idx >= inSamples - 1) idx = inSamples - 1;
-        double frac = pos - (double)idx;
-        const std::size_t nxt = (idx + 1 < inSamples) ? idx + 1 : idx;
-        double v = in[idx] * (1.0 - frac) + in[nxt] * frac;
-        out[i] = (std::int16_t)v;
+    const double step = (double)inFrames / (double)outFrames;
+    std::vector<std::int16_t> out(outFrames * ch);
+    for (std::size_t i = 0; i < outFrames; ++i) {
+        const double pos = (double)i * step;
+        std::size_t f = (std::size_t)pos;
+        if (f >= inFrames - 1) f = inFrames - 1;
+        const double frac = pos - (double)f;
+        const std::size_t nf = (f + 1 < inFrames) ? f + 1 : f;
+        for (std::size_t c = 0; c < ch; ++c) {
+            const double v = in[f * ch + c] * (1.0 - frac) + in[nf * ch + c] * frac;
+            out[i * ch + c] = (std::int16_t)v;
+        }
     }
     w.data.resize(out.size() * 2);
     std::memcpy(w.data.data(), out.data(), out.size() * 2);
@@ -1150,6 +1160,14 @@ std::uint32_t gQuestDmgOff  = 0x17088;         // 任务累计伤害（只含你
 
 volatile int g_useChatEcho = 1;
 int g_desktopShortcut = 1;        // 首次运行时在桌面建 GUI 的快捷方式
+
+// 单个 wav 的体积上限（MB）。wav 是不压缩的：44.1kHz 立体声 16bit 每分钟约
+// 10MB，所以放一段三四分钟的音乐轻松就是 40MB。原来写死 16MB，一首歌直接被
+// 拒掉，日志里只有一句「size invalid」，谁也想不到是体积问题。
+//
+// 注意所有 wav 都会常驻内存（gCache 只在重载配置时清空），配得多、配得大，
+// 游戏进程就吃多少内存 —— 这是把上限放开、而不是取消的原因。
+int g_maxWavMB = 64;
 volatile int g_useChatCommands = 1;
 volatile int g_hotkeysEnabled = 1;   // 启用/关闭热键（ini [WeaponSoundEnhance] Hotkeys=0）
 
@@ -1971,6 +1989,10 @@ void LoadConfig()
                 else if (key == "Enabled") gEnabled = std::atoi(val.c_str()) != 0;
                 else if (key == "MoreSounds") gMoreSounds = std::atoi(val.c_str()) != 0;
                 else if (key == "DesktopShortcut") g_desktopShortcut = std::atoi(val.c_str()) != 0;
+                else if (key == "MaxWavMB") {
+                    const int v = std::atoi(val.c_str());
+                    if (v >= 1 && v <= 512) g_maxWavMB = v;
+                }
                 else if (key == "ChatEcho") g_useChatEcho = std::atoi(val.c_str()) != 0;
                 else if (key == "ChatCommands") g_useChatCommands = std::atoi(val.c_str()) != 0;
                 else if (key == "Hotkeys") g_hotkeysEnabled = std::atoi(val.c_str()) != 0;
@@ -2236,9 +2258,19 @@ const audio::Wav* GetCached(const std::wstring& absPath)
         return nullptr;
     }
     LARGE_INTEGER sz{};
-    if (!::GetFileSizeEx(h, &sz) || sz.QuadPart <= 0 || sz.QuadPart > (16LL << 20)) {
+    const long long maxBytes = (long long)g_maxWavMB << 20;
+    if (!::GetFileSizeEx(h, &sz) || sz.QuadPart <= 0) {
         ::CloseHandle(h);
-        Log("wav size invalid: %s", key.c_str());
+        Log("wav 读不到大小: %s", key.c_str());
+        return nullptr;
+    }
+    if (sz.QuadPart > maxBytes) {
+        ::CloseHandle(h);
+        // 说清楚是体积问题、超了多少、怎么改 —— 原来只写一句 size invalid，
+        // 用户根本不知道是文件太大还是文件坏了
+        Log("wav 太大，跳过: %s （%.1f MB，上限 %d MB。wav 不压缩，44.1kHz 立体声"
+            "每分钟约 10MB；改 ini 的 MaxWavMB= 可放宽，但这些音频会常驻内存）",
+            key.c_str(), (double)sz.QuadPart / 1048576.0, g_maxWavMB);
         return nullptr;
     }
     std::vector<std::uint8_t> raw(static_cast<std::size_t>(sz.QuadPart));

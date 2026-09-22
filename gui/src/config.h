@@ -82,6 +82,7 @@ struct GlobalSettings {
     int chatEcho = 1;
     int chatCommands = 1;
     int hotkeysEnabled = 1;     // 启用热键（插件侧 Hotkeys=1）
+    int maxWavMB = 64;          // 单个 wav 的体积上限（插件侧 MaxWavMB=）
 };
 
 struct Hotkeys {

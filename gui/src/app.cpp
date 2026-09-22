@@ -365,6 +365,7 @@ struct PvCtx {
     std::wstring path;
     float gain;
     unsigned delayMs;
+    long long maxBytes;   // 和插件侧的 MaxWavMB 保持一致，别两边卡不同的数
 };
 
 // 解析 PCM(16bit) 的 fmt/data 块
@@ -410,7 +411,7 @@ static DWORD WINAPI PvWorker(LPVOID param) {
                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return 0;
     LARGE_INTEGER sz{};
-    if (!::GetFileSizeEx(h, &sz) || sz.QuadPart <= 0 || sz.QuadPart > (32LL << 20)) {
+    if (!::GetFileSizeEx(h, &sz) || sz.QuadPart <= 0 || sz.QuadPart > ctx->maxBytes) {
         ::CloseHandle(h);
         return 0;
     }
@@ -454,8 +455,9 @@ static DWORD WINAPI PvWorker(LPVOID param) {
     return 0;
 }
 
-static void PlayPreviewFile(const std::wstring& path, float gain, unsigned delayMs) {
-    PvCtx* c = new PvCtx{ path, gain, delayMs };
+static void PlayPreviewFile(const std::wstring& path, float gain, unsigned delayMs,
+                            long long maxBytes) {
+    PvCtx* c = new PvCtx{ path, gain, delayMs, maxBytes };
     HANDLE th = ::CreateThread(nullptr, 0, &PvWorker, c, 0, nullptr);
     if (th) ::CloseHandle(th);
     else delete c;
@@ -1982,7 +1984,35 @@ void App::PlaySoundPreview(const std::string& rel, int vol, int delayMs) {
     float gain = (cfg.global.volume / 100.0f) * (vol / 100.0f);
     if (gain < 0.0f) gain = 0.0f;
     if (gain > 1.0f) gain = 1.0f;
-    PlayPreviewFile(Utf8ToWide(full), gain, delayMs > 0 ? (unsigned)delayMs : 0);
+    // 先查体积。原来超限是彻底静默的（后台线程里 return 0），用户点了试听
+    // 没反应、也没有任何线索 —— 而这恰恰是最容易踩的一种失败。
+    const long long maxBytes = (long long)cfg.global.maxWavMB << 20;
+    long long fsz = -1;
+    {
+        HANDLE fh = ::CreateFileW(Utf8ToWide(full).c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (fh != INVALID_HANDLE_VALUE) {
+            LARGE_INTEGER li{};
+            if (::GetFileSizeEx(fh, &li)) fsz = li.QuadPart;
+            ::CloseHandle(fh);
+        }
+    }
+    if (fsz < 0) {
+        status = "试听失败：找不到文件 " + rel;
+        return;
+    }
+    if (fsz > maxBytes) {
+        char b[360];
+        snprintf(b, sizeof(b),
+                 "试听失败：%s 有 %.1f MB，超过上限 %d MB。"
+                 "wav 不压缩，44.1kHz 立体声每分钟约 10MB —— "
+                 "要么把音频改短/转成单声道/降采样率，要么把 ini 里的 MaxWavMB 调大"
+                 "（音频会常驻内存，调太大会吃显存以外的内存）。",
+                 rel.c_str(), (double)fsz / 1048576.0, cfg.global.maxWavMB);
+        status = b;
+        return;
+    }
+    PlayPreviewFile(Utf8ToWide(full), gain, delayMs > 0 ? (unsigned)delayMs : 0, maxBytes);
 }
 
 std::string App::OpenFileDialogCsv() {

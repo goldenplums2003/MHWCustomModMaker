@@ -322,6 +322,10 @@ bool LoadConfig(const std::string& path, Config& cfg) {
                 else if (key == "FsmTargetOff") cfg.global.fsmTargetOff = val;
                 else if (key == "QuestRoot") cfg.global.questRoot = val;
                 else if (key == "QuestDmgOff") cfg.global.questDmgOff = val;
+                else if (key == "MaxWavMB") {
+                    const int v = std::atoi(val.c_str());
+                    if (v >= 1 && v <= 512) cfg.global.maxWavMB = v;
+                }
                 else if (key == "ChatEcho") cfg.global.chatEcho = std::atoi(val.c_str());
                 else if (key == "ChatCommands") cfg.global.chatCommands = std::atoi(val.c_str());
                 else if (key == "Hotkeys") cfg.global.hotkeysEnabled = std::atoi(val.c_str());
@@ -550,6 +554,7 @@ bool SaveConfig(const std::string& path, const Config& cfg) {
     o += "FsmTargetOff=" + cfg.global.fsmTargetOff + "\r\n";
     o += "QuestRoot=" + cfg.global.questRoot + "\r\n";
     o += "QuestDmgOff=" + cfg.global.questDmgOff + "\r\n";
+    o += "MaxWavMB=" + std::to_string(cfg.global.maxWavMB) + "\r\n";
     o += "ChatEcho=" + std::to_string(cfg.global.chatEcho) + "\r\n";
     o += "ChatCommands=" + std::to_string(cfg.global.chatCommands) + "\r\n";
     o += "Hotkeys=" + std::to_string(cfg.global.hotkeysEnabled) + "\r\n\r\n";
