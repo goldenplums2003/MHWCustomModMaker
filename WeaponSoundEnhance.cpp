@@ -2658,6 +2658,36 @@ bool FireEntry(const Attack& e, int gauge, std::mt19937& rng, std::uint64_t nowM
 //    大伤害 1.7~2.1 秒才到账），按 ID 关窗会漏判；按时间兜底则即使遇到没登记过的
 //    后续动作 ID 也判得对。
 // ---------------------------------------------------------------------------
+// 判定窗口到点了没有。抽出来是为了能单测 —— 这里判早了会把命中判成落空。
+//
+//   actEnded        动作是否已经结束（含被打断）
+//   sinceActEndMs   动作结束后过了多久
+//   elapsedMs       窗口开了多久
+//   maxDmgMs        这一招「历史上最晚一次出伤」的时刻；<0 = 还没学到
+//   graceMs         余量
+//
+// 两条路径：
+//   ① 动作结束 + 余量
+//   ② 历史最晚出伤 + 余量（过了它就不可能再有伤害，不必等后摇）
+//
+// ① 有个坑：「动作结束」不等于「伤害不会再来」。伤害是游戏在命中帧之后才结算的，
+// 而动作 ID 可能提前切走。登龙实测有只持续 125ms 就换 ID 的，加 150ms 余量就在
+// 275ms 收窗 —— 可命中的出伤时刻中位数是 297ms，一半以上的命中会在窗口关掉之后
+// 才到，全被判成落空。（全部日志里登龙走 ① 收窗 39 次，其中 35 次早于已知出伤窗。）
+//
+// 所以已经学到 maxDmgMs 时，① 不能比它还早收窗：那个值是「伤害最迟什么时候到」
+// 的实测答案，比「动作什么时候结束」可靠得多。
+bool JudgeWindowEnded(bool actEnded, std::uint64_t sinceActEndMs, int elapsedMs,
+                      int maxDmgMs, int graceMs)
+{
+    if (actEnded && sinceActEndMs >= (std::uint64_t)graceMs &&
+        (maxDmgMs < 0 || elapsedMs >= maxDmgMs))
+        return true;
+    if (maxDmgMs >= 0 && elapsedMs >= maxDmgMs + graceMs)
+        return true;
+    return false;
+}
+
 void TickJudgeEntry(Attack& e, bool match, std::uint64_t nowMs,
                     std::mt19937& rng, const std::string& tag)
 {
@@ -2732,16 +2762,11 @@ void TickJudgeEntry(Attack& e, bool match, std::uint64_t nowMs,
              tag.c_str(), (int)el, e.checkGraceMs, e.maxDmgMs);
     }
 
-    // 判定时刻：两条路径谁先到算谁（offset 保证 >= 0，不会算出负数）
+    // 判定时刻：见 JudgeWindowEnded 的注释
     bool endReached = false;
     if (e.checkEndOn == 1) {
-        // ① 动作结束（含被打断）+ offset
-        if (e.actEnded && (nowMs - e.actEndAt) >= (std::uint64_t)e.checkGraceMs)
-            endReached = true;
-        // ② 历史最晚出伤时刻 + offset —— 过了它就不可能再有伤害，不必等后摇
-        if (!endReached && e.maxDmgMs >= 0 &&
-            (int)el >= e.maxDmgMs + e.checkGraceMs)
-            endReached = true;
+        endReached = JudgeWindowEnded(e.actEnded, nowMs - e.actEndAt, (int)el,
+                                      e.maxDmgMs, e.checkGraceMs);
     }
     const bool timeUp = ((int)el >= e.checkTimeoutMs) || endReached;
 
