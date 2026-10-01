@@ -1264,6 +1264,7 @@ void App::OpenEditorEdit(int index) {
     editor.checkTimeoutMs = e.checkTimeoutMs;
     editor.checkOffsetMs  = e.checkOffsetMs;
     editor.endOnAction    = e.endOnAction;
+    editor.stopOnEnd      = e.stopOnEnd;
     editor.checkMode      = e.checkMode;
     editor.conds.clear();
     for (const auto& c : e.conds) {
@@ -1344,6 +1345,7 @@ bool App::ApplyEditor() {
         e.checkTimeoutMs = editor.checkTimeoutMs > 0 ? editor.checkTimeoutMs : 2500;
         e.checkOffsetMs  = editor.checkOffsetMs < 0 ? 0 : editor.checkOffsetMs;
         e.endOnAction    = editor.endOnAction;
+        e.stopOnEnd      = editor.stopOnEnd;
         e.checkMode      = editor.checkMode;
         for (const auto& r : editor.conds) {
             CondSpec c;
@@ -1552,6 +1554,17 @@ void App::DrawEditorDetached() {
             ImGui::TextDisabled("%s", w.c_str());
         }
     }
+
+    // ---- 动作结束就掐掉音效 ----
+    ImGui::Checkbox("动作结束就停掉音效", &editor.stopOnEnd);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(
+            "默认不勾：音效一旦响起就放到底，和动作放完没放完无关。\n"
+            "勾上之后，动作一结束（放完、被打断、被派生掉都算）就把这条目\n"
+            "正在放的音效掐断。配了延时还没出声的，也不会再出声了。\n"
+            "\n"
+            "注意：「动作结束」= 不再匹配本条目，所以上面的 LMT 要填全 ——\n"
+            "一招分几个动作 ID 的，只填了第一个会在招式中途就被判成结束。");
 
     // =====================================================================
     //  判定：动作匹配上只是「开窗」，接着盯一段时间，按条件挑音效池。

@@ -1035,6 +1035,71 @@ void ResampleTo(Wav& w, std::uint32_t targetRate = 44100)
     w.sampleRate = targetRate;
 }
 
+// ---------------------------------------------------------------------------
+//  正在放的声音登记表。
+//
+//  一条声音 = 一条线程 + 一个自己的 HWAVEOUT，整段 PCM 一次性投给 waveOut 之后
+//  线程就死等放完。句柄原来谁也看不见，于是外面没有任何办法叫停它 ——
+//  「动作结束就把音效掐掉」缺的正是这张表。
+//
+//  owner 是条目的标识（Attack::voiceTag），同一条目放出去的声音一起停。
+//  -1 = 不归任何条目（试听之类），谁也掐不着。
+// ---------------------------------------------------------------------------
+struct LiveVoice
+{
+    HWAVEOUT          hwo = nullptr;    // 还在 delay 里、没开设备时是 null
+    int               owner = -1;
+    std::atomic<bool> stopped{false};
+};
+
+std::mutex gVoiceMx;
+std::vector<std::shared_ptr<LiveVoice> > gLive;   // 由 gVoiceMx 保护
+
+std::shared_ptr<LiveVoice> Register(int owner)
+{
+    std::shared_ptr<LiveVoice> v(new LiveVoice());
+    v->owner = owner;
+    std::lock_guard<std::mutex> lk(gVoiceMx);
+    gLive.push_back(v);
+    return v;
+}
+
+void Unregister(const std::shared_ptr<LiveVoice>& v)
+{
+    std::lock_guard<std::mutex> lk(gVoiceMx);
+    for (std::size_t i = 0; i < gLive.size(); ++i)
+        if (gLive[i] == v) { gLive.erase(gLive.begin() + i); break; }
+}
+
+// 把开好的设备句柄登记出去。返回 false 表示「开设备这一瞬间已经被掐了」，
+// 调用方直接关掉走人 —— 不查这一下的话，正好卡在 waveOutOpen 中间的那次 stop 会落空。
+bool Publish(const std::shared_ptr<LiveVoice>& v, HWAVEOUT hwo)
+{
+    std::lock_guard<std::mutex> lk(gVoiceMx);
+    if (v->stopped.load()) return false;
+    v->hwo = hwo;
+    return true;
+}
+
+// 掐掉某条目正在放的所有声音，返回掐了几条。
+int StopOwner(int owner)
+{
+    if (owner < 0) return 0;
+    int n = 0;
+    std::lock_guard<std::mutex> lk(gVoiceMx);
+    for (std::size_t i = 0; i < gLive.size(); ++i) {
+        const std::shared_ptr<LiveVoice>& v = gLive[i];
+        if (v->owner != owner || v->stopped.load()) continue;
+        v->stopped.store(true);
+        // 已经开了设备就立刻 reset：缓冲会被标成 done，播放线程的等待循环随即退出，
+        // 由它自己去 unprepare/close —— 这里不碰那两个，免得和它抢。
+        // 还在 delay 里的（hwo 为空）靠 stopped 这个标志自己结束，连设备都不会开。
+        if (v->hwo) ::waveOutReset(v->hwo);
+        ++n;
+    }
+    return n;
+}
+
 const int kMaxVoices = 6;   // simultaneous waveOut voices; excess is dropped
 std::atomic<int> gVoices{0};
 
@@ -1048,7 +1113,8 @@ struct Engine
 
     // Copy PCM with per-sound gain, then hand to a worker thread. Returns true
     // once the copy was accepted; the voice cap is enforced inside the worker.
-    bool Play(const Wav& w, float volume, unsigned delayMs = 0)
+    // owner：哪条目放的，用来做「动作结束就掐掉」；-1 = 不归谁管，掐不着。
+    bool Play(const Wav& w, float volume, unsigned delayMs = 0, int owner = -1)
     {
         if (!w.valid || w.data.empty()) { mLastHr = E_INVALIDARG; return false; }
         if (w.bitsPer != 16) { mLastHr = E_INVALIDARG; return false; }
@@ -1064,6 +1130,7 @@ struct Engine
         ctx->rate = w.sampleRate;
         ctx->bits = w.bitsPer;
         ctx->delayMs = delayMs;
+        ctx->owner = owner;
 
         HANDLE th = ::CreateThread(nullptr, 0, &PlayWorker_Host, ctx, 0, nullptr);
         if (!th) { delete ctx; mLastHr = E_OUTOFMEMORY; return false; }
@@ -1080,6 +1147,7 @@ private:
         DWORD rate = 44100;
         WORD  bits = 16;
         unsigned delayMs = 0;
+        int   owner = -1;
     };
 
     struct VoiceGuard {
@@ -1102,7 +1170,23 @@ private:
     static void PlayWorker(PlayCtx& ctx)
     {
         if (ctx.samples.empty()) return;
-        if (ctx.delayMs > 0) ::Sleep(ctx.delayMs);
+
+        // 先登记再出声：delay 还没走完就被掐的，连设备都不用开。
+        std::shared_ptr<LiveVoice> lv = Register(ctx.owner);
+        struct Bye {
+            std::shared_ptr<LiveVoice> v;
+            bool done = false;
+            ~Bye() { if (!done) Unregister(v); }
+        } bye{lv};
+
+        // delay 切成小段睡，中途被掐能马上退出（原来是一觉睡到底）
+        for (unsigned waited = 0; waited < ctx.delayMs; ) {
+            if (lv->stopped.load()) return;
+            const unsigned slice = (ctx.delayMs - waited > 10u) ? 10u : (ctx.delayMs - waited);
+            ::Sleep(slice);
+            waited += slice;
+        }
+        if (lv->stopped.load()) return;
 
         WAVEFORMATEX wfx = {};
         wfx.wFormatTag = WAVE_FORMAT_PCM;
@@ -1116,6 +1200,9 @@ private:
         if (waveOutOpen(&hwo, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR)
             return;
 
+        // 句柄登记出去之后 StopOwner 才看得见它
+        if (!Publish(lv, hwo)) { waveOutClose(hwo); return; }
+
         std::vector<std::uint8_t> bytes(ctx.samples.size() * 2);
         std::memcpy(bytes.data(), ctx.samples.data(), bytes.size());
 
@@ -1123,11 +1210,17 @@ private:
         hdr.lpData = reinterpret_cast<LPSTR>(bytes.data());
         hdr.dwBufferLength = static_cast<DWORD>(bytes.size());
         if (waveOutPrepareHeader(hwo, &hdr, sizeof(hdr)) != MMSYSERR_NOERROR) {
+            Unregister(lv); bye.done = true;
             waveOutClose(hwo); return;
         }
         waveOutWrite(hwo, &hdr, sizeof(hdr));
+        // 被 StopOwner 掐掉时 waveOutReset 会把缓冲标成 done，这个循环自己就退出来了
         while ((hdr.dwFlags & WHDR_DONE) == 0)
             ::Sleep(10);
+        // 先摘登记、再关设备。顺序反了就有空档：StopOwner 可能正拿着一个
+        // 已经在 waveOutClose 里的句柄去调 waveOutReset。
+        // 反过来则安全 —— 登记表里还能看见的句柄，一定还没开始关。
+        Unregister(lv); bye.done = true;
         waveOutUnprepareHeader(hwo, &hdr, sizeof(hdr));
         waveOutClose(hwo);
     }
@@ -1550,6 +1643,33 @@ struct CondPool
     bool atEnd = false;
 };
 
+// 「动作结束就掐掉音效」的运行时状态。抽成独立结构 + 纯函数是为了能单测 ——
+// 这里判错了会把正放着的音效拦腰切断，而这种事在日志里是看不出来的。
+struct StopRt
+{
+    bool          armed    = false;   // 这一轮匹配过（没匹配过就没什么好掐的）
+    std::uint64_t unmatchAt = 0;      // 动作是什么时候离开本条目的；0 = 还在
+};
+
+// 动作 ID 在两拍之间偶尔会抖一下（轮询 60ms，游戏里派生、硬直切换都可能让它
+// 瞬间不匹配）。立刻掐的话，好端端的音效会被切断，所以要求「持续不匹配」到这个
+// 时长才算动作真的结束。100ms 至少跨两拍，人耳听不出这点延迟。
+const int kStopConfirmMs = 100;
+
+// 推进状态并回答「这一拍要不要掐」。掐过一次之后必须等下一次重新匹配才会再掐。
+bool TickStopOnEnd(StopRt& st, bool enabled, bool match, std::uint64_t nowMs,
+                   int confirmMs)
+{
+    if (!enabled) { st.armed = false; st.unmatchAt = 0; return false; }
+    if (match) { st.armed = true; st.unmatchAt = 0; return false; }
+    if (!st.armed) return false;
+    if (st.unmatchAt == 0) st.unmatchAt = nowMs;
+    if (nowMs - st.unmatchAt < (std::uint64_t)confirmMs) return false;
+    st.armed = false;          // 掐过就落闩，等下次动作再起来
+    st.unmatchAt = 0;
+    return true;
+}
+
 // One ini [Attack...] section: trigger conditions + sound pools.
 struct Attack
 {
@@ -1566,6 +1686,14 @@ struct Attack
     std::string name;             // Name= display label (ignored by matching)
     std::string group;            // Group= logical action: all members fire at most
                                   // once per action occurrence (first trigger wins)
+    // 动作一结束（放完、被打断、被派生掉都算）就把这条目放出去的音效掐掉。
+    // ini: StopOnEnd=1。默认 0 = 老行为，音效一旦响起就放到底。
+    //
+    // 注意：「动作结束」= 不再匹配本条目，所以条目里 LMT 列全了才准 —— 一招分
+    // 几个动作 ID 的，只填了第一个就会在中途被判成结束。
+    int  stopOnEnd = 0;
+    int  voiceTag  = -1;          // 这条目放出去的声音的标识，载入 ini 时分配
+
     Pool defPool;                 // default pool (tag = "any")
     Pool gaugePool[4];            // LS gauge pools, keyed by level 0..3
     bool inMatch = false;         // edge latch: fire once per action (ungrouped entries)
@@ -1600,6 +1728,7 @@ struct Attack
     std::vector<CondPool> conds;  // 按书写顺序求值，第一个成立的播；都不成立走 defPool
 
     // ---- 运行时状态（不来自 ini）----
+    StopRt        stopRt;              // StopOnEnd 的状态
     bool          winOpen   = false;
     std::uint64_t winStart  = 0;
     bool          baseTaken = false;   // 是否已过 checkDelayMs、重取过伤害基准
@@ -1918,6 +2047,8 @@ void LoadConfig()
         std::string key = (inCombo && curComboW >= 0)
                               ? ("cb|" + std::to_string(curComboW) + "|" + curComboName)
                               : ("def|" + std::to_string(cur.weaponType));
+        static int nextVoiceTag = 0;
+        cur.voiceTag = nextVoiceTag++;
         comboData[key].push_back(std::move(cur));
         inAttack = false;
         cur = Attack();
@@ -2099,6 +2230,10 @@ void LoadConfig()
             cur.name = val;
         } else if (key == "Group") {
             cur.group = val;
+        } else if (key == "StopOnEnd" || key == "StopOnActionEnd") {
+            const std::string lv2 = ToLower(val);
+            cur.stopOnEnd = (lv2 == "action" || lv2 == "true" ||
+                             std::atoi(val.c_str()) != 0) ? 1 : 0;
         } else if (key == "CheckDelayMs") {
             cur.checkDelayMs = std::atoi(val.c_str());
         } else if (key == "CheckTimeoutMs") {
@@ -2537,7 +2672,8 @@ bool CooldownHit(const std::string& pathKey, std::uint64_t nowMs)
 }
 
 // Play one spec. Caller already decided cooldown policy.
-bool PlayOne(const SoundSpec& sp, const std::string& what)
+// owner = 条目的 voiceTag，用来做「动作结束就掐掉」；-1 = 不归谁管。
+bool PlayOne(const SoundSpec& sp, const std::string& what, int owner)
 {
     if (sp.path.empty()) return false;
     const std::wstring abs = AbsFor(sp.path);
@@ -2552,7 +2688,7 @@ bool PlayOne(const SoundSpec& sp, const std::string& what)
             wch = w->channels; wrate = w->sampleRate; wbits = w->bitsPer;
             wsz = w->data.size();
             const float volF = ((float)gVolumePct / 100.0f) * ((float)sp.vol / 100.0f);
-            ok = audio::g_audio.Play(*w, volF, (unsigned)sp.delay);
+            ok = audio::g_audio.Play(*w, volF, (unsigned)sp.delay, owner);
         }
     }
     if (!hasWav) {
@@ -2565,6 +2701,8 @@ bool PlayOne(const SoundSpec& sp, const std::string& what)
              (int)gVolumePct);
         return true;
     }
+    // 注意：这条退路走的是系统 PlaySoundW，没有句柄，StopOnEnd 掐不着它。
+    // 只有 waveOut 开不起来时才会走到，正常情况下不会。
     LogD("waveOut rejected (hr=0x%08X), PlaySoundW fallback: %s",
          (unsigned)audio::g_audio.LastHr(), strconv::ToUtf8(abs).c_str());
     ok = ::PlaySoundW(abs.c_str(), nullptr, SND_FILENAME | SND_ASYNC | SND_NODEFAULT) != FALSE;
@@ -2576,7 +2714,7 @@ bool PlayOne(const SoundSpec& sp, const std::string& what)
 // 播放一个指定的音效池（固定层 + 随机层）。原先这段嵌在 FireEntry 里，
 // 拆出来是为了让条件池也能复用同一套播放逻辑。
 bool FirePool(const Pool* pool, std::mt19937& rng, std::uint64_t nowMs,
-              const std::string& what)
+              const std::string& what, int owner)
 {
     if (!pool || pool->empty()) return false;
 
@@ -2597,7 +2735,7 @@ bool FirePool(const Pool* pool, std::mt19937& rng, std::uint64_t nowMs,
             LogD("COOLDOWN(fixed): skip %s", pathKey.c_str());
             continue;
         }
-        if (PlayOne(sp, what)) any = true;
+        if (PlayOne(sp, what, owner)) any = true;
     }
 
     // random layer: one pick from the non-fixed set; without any fixed sounds
@@ -2612,7 +2750,7 @@ bool FirePool(const Pool* pool, std::mt19937& rng, std::uint64_t nowMs,
             const SoundSpec& sp = pool->specs[randomIdx[(start + t) % n]];
             const std::string pathKey = strconv::ToUtf8(AbsFor(sp.path));
             if (CooldownHit(pathKey, nowMs)) continue;
-            if (PlayOne(sp, what)) { any = true; break; }
+            if (PlayOne(sp, what, owner)) { any = true; break; }
         }
         return any;
     }
@@ -2630,7 +2768,7 @@ bool FirePool(const Pool* pool, std::mt19937& rng, std::uint64_t nowMs,
         const SoundSpec& sp = pool->specs[(start + t) % n];
         const std::string pathKey = strconv::ToUtf8(AbsFor(sp.path));
         if (CooldownHit(pathKey, nowMs)) continue;
-        if (PlayOne(sp, what)) { any = true; break; }
+        if (PlayOne(sp, what, owner)) { any = true; break; }
     }
     return any;
 }
@@ -2647,7 +2785,7 @@ bool FireEntry(const Attack& e, int gauge, std::mt19937& rng, std::uint64_t nowM
     }
     const std::string what = tag + (usedGauge ? std::string(" gauge=") + std::to_string(gauge)
                                               : std::string(" gauge=default"));
-    return FirePool(pool, rng, nowMs, what);
+    return FirePool(pool, rng, nowMs, what, e.voiceTag);
 }
 
 // ---------------------------------------------------------------------------
@@ -2783,7 +2921,7 @@ void TickJudgeEntry(Attack& e, bool match, std::uint64_t nowMs,
         LogD("%s judge: MATCH [%s]%s dmg=%d dAura=%d ms=%d",
              tag.c_str(), c.text.c_str(), waitEnd ? " (end)" : "",
              v.v[cond::V_DMG], v.v[cond::V_DAURA], v.v[cond::V_MS]);
-        FirePool(&c.pool, rng, nowMs, tag + " [" + c.text + "]");
+        FirePool(&c.pool, rng, nowMs, tag + " [" + c.text + "]", e.voiceTag);
         teamchat::Queue(c.chat);
         e.winOpen = false;
         return;
@@ -2793,7 +2931,7 @@ void TickJudgeEntry(Attack& e, bool match, std::uint64_t nowMs,
         // 都不成立 -> 兜底池（就是这条目的 Sound= ）
         LogD("%s judge: timeout, fallback (dmg=%d dAura=%d)",
              tag.c_str(), v.v[cond::V_DMG], v.v[cond::V_DAURA]);
-        FirePool(&e.defPool, rng, nowMs, tag + " [timeout]");
+        FirePool(&e.defPool, rng, nowMs, tag + " [timeout]", e.voiceTag);
         teamchat::Queue(e.defChat);
         e.winOpen = false;
     }
@@ -2975,6 +3113,14 @@ DWORD WINAPI WorkerProc(LPVOID)
                     e.HasOutput();
 
                 const std::string tag = "a[" + e.name + "]";
+
+                // 动作结束就掐掉这条目放出去的音效。放在三条分支之前，
+                // 普通条目 / 动作组条目 / 判定条目一视同仁。
+                if (TickStopOnEnd(e.stopRt, e.stopOnEnd != 0, match, nowMs,
+                                  kStopConfirmMs)) {
+                    const int cut = audio::StopOwner(e.voiceTag);
+                    if (cut > 0) LogD("STOP: %s 动作结束，掐掉 %d 条音效", tag.c_str(), cut);
+                }
 
                 // 延迟判定条目走独立的状态机；没配 CheckTimeoutMs 的条目
                 // 一律走下面的旧逻辑，行为与旧版完全一致。

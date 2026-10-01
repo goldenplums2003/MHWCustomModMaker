@@ -389,6 +389,10 @@ bool LoadConfig(const std::string& path, Config& cfg) {
             cur.monsterName = val;
         } else if (key == "Name") {
             cur.name = val;
+        } else if (key == "StopOnEnd" || key == "StopOnActionEnd") {
+            std::string lv;
+            for (char c : val) lv += (char)tolower((unsigned char)c);
+            cur.stopOnEnd = (lv == "action" || lv == "true" || std::atoi(val.c_str()) != 0);
         } else if (key == "CheckDelayMs") {
             cur.checkDelayMs = std::atoi(val.c_str());
         } else if (key == "CheckTimeoutMs") {
@@ -483,13 +487,13 @@ static void WriteEntry(const SoundEntry& e, int n, std::string& o) {
     o += LmtLine(e) + "\r\n";
     o += "FSMId=" + std::to_string(e.fsmId) + "\r\n";
     if (e.fsmTarget >= 0) o += "FSMTarget=" + std::to_string(e.fsmTarget) + "\r\n";
+    // 默认是关的，关着就不写 —— 不然每条老条目都要白添一行 StopOnEnd=0。
+    // （CheckEndOn 必须两种都写，那是因为它"不写"的含义和默认值对不上，这里对得上。）
+    if (e.stopOnEnd) o += "StopOnEnd=1\r\n";
     if (e.checkTimeoutMs > 0 && !e.conds.empty()) {
         if (e.checkDelayMs > 0)
             o += "CheckDelayMs=" + std::to_string(e.checkDelayMs) + "\r\n";
         o += "CheckTimeoutMs=" + std::to_string(e.checkTimeoutMs) + "\r\n";
-        // 两种取值都显式写出。原来只在 endOnAction 为真时写 action，
-        // 于是 ini 里的 CheckEndOn=time 保存一次就没了，回读时又按默认值
-        // 变回 action（往返测试抓到的）。
         // 两种取值都显式写出。原来只在 endOnAction 为真时写 action，
         // 于是 ini 里的 CheckEndOn=time 保存一次就没了，回读时又按默认值
         // 变回 action（往返测试抓到的）。

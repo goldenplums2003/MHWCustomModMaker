@@ -62,6 +62,7 @@ struct App {
         char lmtBuf[128] = {};
         bool lmtAny = false;           // 勾选「LMT 不限」= 该 FSMId 的所有动作都触发
         std::vector<SoundSpec> pool[5]; // 0 = 默认音效；1..4 = 无刃时/白刃时/黄刃时/红刃时
+        bool stopOnEnd = false;        // 动作结束就把这条目放出去的音效掐掉
 
         // ---- 判定（延迟判定）----
         int  judgePreset = 0;        // 0=不判定 1..N=内置预设 N+1=自定义

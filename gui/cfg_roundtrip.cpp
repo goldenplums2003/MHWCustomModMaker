@@ -49,6 +49,12 @@ int main(int argc, char** argv) {
                 a.checkOffsetMs != b.checkOffsetMs || a.endOnAction != b.endOnAction) {
                 printf("!! [%s] 判定参数不一致\n", a.name.c_str()); ++bad;
             }
+            // StopOnEnd 关着的时候不写进 ini（省得给每条老条目白添一行），
+            // 所以得确认「不写」回读出来确实还是关的
+            if (a.stopOnEnd != b.stopOnEnd) {
+                printf("!! [%s] StopOnEnd %d -> %d\n", a.name.c_str(),
+                       (int)a.stopOnEnd, (int)b.stopOnEnd); ++bad;
+            }
             if (a.conds.size() != b.conds.size()) {
                 printf("!! [%s] 条件数 %d -> %d\n", a.name.c_str(),
                        (int)a.conds.size(), (int)b.conds.size()); ++bad;

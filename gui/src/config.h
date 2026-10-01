@@ -54,6 +54,9 @@ struct SoundEntry {
     // 变成 action（往返测试抓到的）。
     bool endOnAction = false;     // 动作结束(含被打断)也作为判定时机
     int checkMode = 0;            // CheckMode=final(1)：把所有条件都改成窗口结束时评
+    // 动作一结束（放完、被打断、被派生掉都算）就把这条目放出去的音效掐掉。
+    // ini: StopOnEnd=1。默认关 = 老行为，音效响起来就放到底。
+    bool stopOnEnd = false;
     std::string defChat;          // Chat=，兜底触发时发的队伍聊天
     std::vector<CondSpec> conds;
 
